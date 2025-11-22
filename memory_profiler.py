@@ -1,27 +1,33 @@
-import logging
-import socket
 import argparse
+import logging
+import os
+import socket
+
 from datetime import datetime, timedelta
 
 import torch
-import os
 import torch.nn as nn
 import torch.optim as optim
+
 from torch.autograd.profiler import record_function
 
-from model import fetch_model
-from criterion.loss import sequence_loss
 from config.parser import parse_args
+from criterion.loss import sequence_loss
+from model import fetch_model
+
 
 PREFIX = "../memory_profile_results/"
 
+
 def fetch_optimizer(args, model):
-    """ Create the optimizer and learning rate scheduler """
+    """Create the optimizer and learning rate scheduler"""
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wdecay, eps=args.epsilon)
-    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, args.lr, args.num_steps + 100,
-        pct_start=0.05, cycle_momentum=False, anneal_strategy='linear')
+    scheduler = optim.lr_scheduler.OneCycleLR(
+        optimizer, args.lr, args.num_steps + 100, pct_start=0.05, cycle_momentum=False, anneal_strategy="linear"
+    )
 
     return optimizer, scheduler
+
 
 class NetWrapper(nn.Module):
     def __init__(self, args):
@@ -31,15 +37,17 @@ class NetWrapper(nn.Module):
     def forward(self, x, flow_gt=None):
         return self.model(x, x, flow_gt=flow_gt)
 
+
 logging.basicConfig(
-   format="%(levelname)s:%(asctime)s %(message)s",
-   level=logging.INFO,
-   datefmt="%Y-%m-%d %H:%M:%S",
+    format="%(levelname)s:%(asctime)s %(message)s",
+    level=logging.INFO,
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger: logging.Logger = logging.getLogger(__name__)
 logger.setLevel(level=logging.INFO)
 
 TIME_FORMAT_STR: str = "%b_%d_%H_%M_%S"
+
 
 def trace_handler(prof: torch.profiler.profile):
     # Prefix for file names.
@@ -52,6 +60,7 @@ def trace_handler(prof: torch.profiler.profile):
     # Construct the memory timeline file.
     prof.export_memory_timeline(f"{file_prefix}.html", device="cuda:0")
     print(f"Memory timeline saved to {file_prefix}.html")
+
 
 def run_model(args, num_iters=5, device="cuda:0"):
     global PREFIX
@@ -83,11 +92,13 @@ def run_model(args, num_iters=5, device="cuda:0"):
                 optimizer.step()
             optimizer.zero_grad(set_to_none=True)
 
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', help='experiment configure file name', required=True, type=str) 
+    parser.add_argument("--cfg", help="experiment configure file name", required=True, type=str)
     args = parse_args(parser)
     run_model(args)
+
 
 if __name__ == "__main__":
     main()

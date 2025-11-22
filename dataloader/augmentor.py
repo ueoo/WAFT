@@ -1,52 +1,56 @@
-import numpy as np
-import random
 import math
-from PIL import Image
+import random
 
 import cv2
+import numpy as np
+
+from PIL import Image
+
+
 cv2.setNumThreads(0)
 cv2.ocl.setUseOpenCL(False)
 
 import torch
 import torch.nn.functional as F
-from torchvision.transforms import ColorJitter
+
 from scipy.interpolate import griddata
+from torchvision.transforms import ColorJitter
+
 
 def interpolate_holes_numpy(image, valid_mask):
     """
     Interpolate black holes in a NumPy image using linear interpolation.
-    
+
     Args:
         image (np.ndarray): 2D or 3D NumPy array representing the image.
         valid_mask (np.ndarray): 2D binary mask, 1 = valid, 0 = invalid.
-    
+
     Returns:
         np.ndarray: Image with holes interpolated.
     """
     # Ensure image is float
     image = image.astype(np.float32)
     valid_mask = valid_mask.astype(bool)
-    
+
     # Create mesh grid of coordinates
-    grid_y, grid_x = np.mgrid[0:image.shape[0], 0:image.shape[1]]
-    
+    grid_y, grid_x = np.mgrid[0 : image.shape[0], 0 : image.shape[1]]
+
     # Get valid coordinates and corresponding values
     valid_coords = np.stack((grid_y[valid_mask], grid_x[valid_mask]), axis=-1)
     valid_values = image[valid_mask]
-    
+
     # Get coordinates of invalid pixels
     invalid_coords = np.stack((grid_y[~valid_mask], grid_x[~valid_mask]), axis=-1)
-    
+
     # Perform interpolation
-    interpolated_values = griddata(
-        valid_coords, valid_values, invalid_coords, method='linear'
-    )
-    
+    interpolated_values = griddata(valid_coords, valid_values, invalid_coords, method="linear")
+
     # Fill the invalid pixels in the image
     interpolated_image = image.copy()
     interpolated_image[~valid_mask] = interpolated_values
     interpolated_image[np.isnan(interpolated_image)] = 0
     return interpolated_image
+
 
 class FlowAugmentor:
     def __init__(self, crop_size, min_scale=-0.2, max_scale=0.5, do_flip=True, args=None):
@@ -64,7 +68,7 @@ class FlowAugmentor:
         self.v_flip_prob = 0.1
 
         # photometric augmentation params
-        self.photo_aug = ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.5/3.14)
+        self.photo_aug = ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.5 / 3.14)
         self.asymmetric_color_aug_prob = 0.2
         self.eraser_aug_prob = 0.5
 
@@ -77,12 +81,12 @@ class FlowAugmentor:
                 y0 = np.random.randint(0, ht)
                 dx = np.random.randint(50, 100)
                 dy = np.random.randint(50, 100)
-                img2[y0:y0+dy, x0:x0+dx, :] = mean_color
+                img2[y0 : y0 + dy, x0 : x0 + dx, :] = mean_color
 
         return img1, img2
-        
+
     def color_transform(self, img1, img2):
-        """ Photometric augmentation """
+        """Photometric augmentation"""
         # asymmetric
         if np.random.rand() < self.asymmetric_color_aug_prob:
             img1 = np.array(self.photo_aug(Image.fromarray(img1)), dtype=np.uint8)
@@ -138,35 +142,39 @@ class FlowAugmentor:
             pad_b = self.crop_size[0] - img1.shape[0]
         if self.crop_size[1] > img1.shape[1]:
             pad_r = self.crop_size[1] - img1.shape[1]
-            
+
         if pad_b != 0 or pad_r != 0:
-            img1 = np.pad(img1, ((pad_t, pad_b), (pad_l, pad_r), (0, 0)), 'constant', constant_values=((0, 0), (0, 0), (0, 0)))
-            img2 = np.pad(img2, ((pad_t, pad_b), (pad_l, pad_r), (0, 0)), 'constant', constant_values=((0, 0), (0, 0), (0, 0)))
-            flow = np.pad(flow, ((pad_t, pad_b), (pad_l, pad_r), (0, 0)), 'constant', constant_values=((0, 0), (0, 0), (0, 0)))
-            valid = np.pad(valid, ((pad_t, pad_b), (pad_l, pad_r)), 'constant', constant_values=((0, 0), (0, 0)))
-        
+            img1 = np.pad(
+                img1, ((pad_t, pad_b), (pad_l, pad_r), (0, 0)), "constant", constant_values=((0, 0), (0, 0), (0, 0))
+            )
+            img2 = np.pad(
+                img2, ((pad_t, pad_b), (pad_l, pad_r), (0, 0)), "constant", constant_values=((0, 0), (0, 0), (0, 0))
+            )
+            flow = np.pad(
+                flow, ((pad_t, pad_b), (pad_l, pad_r), (0, 0)), "constant", constant_values=((0, 0), (0, 0), (0, 0))
+            )
+            valid = np.pad(valid, ((pad_t, pad_b), (pad_l, pad_r)), "constant", constant_values=((0, 0), (0, 0)))
+
         # randomly sample scale
         ht, wd = img1.shape[:2]
-        min_scale = np.maximum(
-            (self.crop_size[0] + 1) / float(ht), 
-            (self.crop_size[1] + 1) / float(wd))
+        min_scale = np.maximum((self.crop_size[0] + 1) / float(ht), (self.crop_size[1] + 1) / float(wd))
 
         scale = 2 ** np.random.uniform(self.min_scale, self.max_scale)
         scale_x = scale
         scale_y = scale
         if np.random.rand() < self.stretch_prob:
             scale_x *= 2 ** np.random.uniform(-self.max_stretch, self.max_stretch)
-            scale_y *= 2 ** np.random.uniform(-self.max_stretch, self.max_stretch)  
+            scale_y *= 2 ** np.random.uniform(-self.max_stretch, self.max_stretch)
 
         scale_x = np.clip(scale_x, min_scale, None)
         scale_y = np.clip(scale_y, min_scale, None)
-        
+
         valid = (valid.astype(np.float32) > 0.5).astype(bool)
         if np.random.rand() < self.spatial_aug_prob:
             # rescale the images
             img1 = cv2.resize(img1, None, fx=scale_x, fy=scale_y, interpolation=cv2.INTER_LINEAR)
             img2 = cv2.resize(img2, None, fx=scale_x, fy=scale_y, interpolation=cv2.INTER_LINEAR)
-            flow[~valid] = 0           
+            flow[~valid] = 0
             valid = valid.astype(np.float32)
             flow = cv2.resize(flow, None, fx=scale_x, fy=scale_y, interpolation=cv2.INTER_LINEAR)
             valid = cv2.resize(valid, None, fx=scale_x, fy=scale_y, interpolation=cv2.INTER_LINEAR)
@@ -175,12 +183,12 @@ class FlowAugmentor:
             flow[~valid] = 0
 
         if self.do_flip:
-            if np.random.rand() < self.h_flip_prob: # h-flip
+            if np.random.rand() < self.h_flip_prob:  # h-flip
                 img1 = img1[:, ::-1]
                 img2 = img2[:, ::-1]
                 flow = flow[:, ::-1] * [-1.0, 1.0]
 
-            if np.random.rand() < self.v_flip_prob: # v-flip
+            if np.random.rand() < self.v_flip_prob:  # v-flip
                 img1 = img1[::-1, :]
                 img2 = img2[::-1, :]
                 flow = flow[::-1, :] * [1.0, -1.0]
@@ -189,18 +197,17 @@ class FlowAugmentor:
             y0 = 0
         else:
             y0 = np.random.randint(0, img1.shape[0] - self.crop_size[0])
-            
+
         if img1.shape[1] == self.crop_size[1]:
             x0 = 0
         else:
             x0 = np.random.randint(0, img1.shape[1] - self.crop_size[1])
-        
-        img1 = img1[y0:y0+self.crop_size[0], x0:x0+self.crop_size[1]]
-        img2 = img2[y0:y0+self.crop_size[0], x0:x0+self.crop_size[1]]
-        flow = flow[y0:y0+self.crop_size[0], x0:x0+self.crop_size[1]]
-        valid = valid[y0:y0+self.crop_size[0], x0:x0+self.crop_size[1]]
-        return img1, img2, flow, valid
 
+        img1 = img1[y0 : y0 + self.crop_size[0], x0 : x0 + self.crop_size[1]]
+        img2 = img2[y0 : y0 + self.crop_size[0], x0 : x0 + self.crop_size[1]]
+        flow = flow[y0 : y0 + self.crop_size[0], x0 : x0 + self.crop_size[1]]
+        valid = valid[y0 : y0 + self.crop_size[0], x0 : x0 + self.crop_size[1]]
+        return img1, img2, flow, valid
 
     def __call__(self, img1, img2, flow, valid):
         img1, img2 = self.color_transform(img1, img2)

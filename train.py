@@ -1,24 +1,27 @@
-import sys
-import os
 import argparse
+import os
+import sys
+import time
+
 import numpy as np
 import torch
-import time
 import torch.optim as optim
+import wandb
 
 from config.parser import parse_args
-from model import fetch_model
-from dataloader.loader import fetch_dataloader
-from utils.utils import load_ckpt
-from utils.ddp_utils import *
 from criterion.loss import sequence_loss
+from dataloader.loader import fetch_dataloader
+from model import fetch_model
+from utils.ddp_utils import *
+from utils.utils import load_ckpt
 
-import wandb
 
 os.system("export KMP_INIT_AT_FORK=FALSE")
 
+
 class AverageMeter(object):
     """Computes and stores the average and current value"""
+
     def __init__(self):
         self.reset()
 
@@ -34,26 +37,29 @@ class AverageMeter(object):
         self.count += n
         self.avg = self.sum / self.count
 
+
 def fetch_optimizer(args, model):
-    """ Create the optimizer and learning rate scheduler """
+    """Create the optimizer and learning rate scheduler"""
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wdecay, eps=args.epsilon)
-    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, args.lr, args.num_steps + 100,
-        pct_start=0.05, cycle_momentum=False, anneal_strategy='linear')
+    scheduler = optim.lr_scheduler.OneCycleLR(
+        optimizer, args.lr, args.num_steps + 100, pct_start=0.05, cycle_momentum=False, anneal_strategy="linear"
+    )
 
     return optimizer, scheduler
 
+
 def train(args, rank=0, world_size=1, use_ddp=False):
-    """ Full training loop """
+    """Full training loop"""
     device_id = rank
     model = fetch_model(args).to(device_id)
     if rank == 0:
         avg_loss = AverageMeter()
         avg_epe = AverageMeter()
 
-        if args.algorithm == 'waftv2':
+        if args.algorithm == "waftv2":
             args.exp_name = f"{args.algorithm}-{args.feature_encoder}-{args.seed}"
         else:
-            args.feature_encoder = 'dav2'
+            args.feature_encoder = "dav2"
             args.exp_name = f"{args.algorithm}-{args.feature_encoder}-{args.seed}"
 
         wandb.init(
@@ -87,37 +93,41 @@ def train(args, rank=0, world_size=1, use_ddp=False):
             if rank == 0:
                 if valid.sum() > 0:
                     avg_loss.update(loss.item())
-                    epe = (((flow - output['flow'][-1])**2).sum(dim=1)).sqrt()
+                    epe = (((flow - output["flow"][-1]) ** 2).sum(dim=1)).sqrt()
                     epe = (epe * valid).sum() / valid.sum()
                     avg_epe.update(epe.item())
-                    
-                if total_steps % 100 == 0:    
+
+                if total_steps % 100 == 0:
                     wandb.log({"loss": avg_loss.avg, "epe": avg_epe.avg})
                     avg_loss.reset()
                     avg_epe.reset()
                     cnt_overheat = 0
 
-
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip) 
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
             optimizer.step()
             scheduler.step()
             if total_steps % VAL_FREQ == VAL_FREQ - 1 and rank == 0:
-                save_dir = os.path.join('checkpoints', str(args.name), str(args.algorithm), str(args.feature_encoder), str(args.seed))
+                save_dir = os.path.join(
+                    "checkpoints", str(args.name), str(args.algorithm), str(args.feature_encoder), str(args.seed)
+                )
                 os.makedirs(save_dir, exist_ok=True)
                 torch.save(model.module.state_dict(), os.path.join(save_dir, f"{total_steps+1}.pth"))
 
             if total_steps > args.num_steps:
                 should_keep_training = False
                 break
-            
+
             total_steps += 1
 
     if rank == 0:
-        save_dir = os.path.join('checkpoints', str(args.name), str(args.algorithm), str(args.feature_encoder), str(args.seed))
+        save_dir = os.path.join(
+            "checkpoints", str(args.name), str(args.algorithm), str(args.feature_encoder), str(args.seed)
+        )
         os.makedirs(save_dir, exist_ok=True)
-        torch.save(model.module.state_dict(), os.path.join(save_dir, 'final.pth'))
+        torch.save(model.module.state_dict(), os.path.join(save_dir, "final.pth"))
         wandb.finish()
+
 
 def main(rank, world_size, args, use_ddp):
     if use_ddp:
@@ -129,11 +139,12 @@ def main(rank, world_size, args, use_ddp):
 
     train(args, rank=rank, world_size=world_size, use_ddp=use_ddp)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', help='experiment configure file name', required=True, type=str)
-    parser.add_argument('--seed', help='seed', default=42, type=int)
-    parser.add_argument('--restore_ckpt', help='restore checkpoint', default=None, type=str)
+    parser.add_argument("--cfg", help="experiment configure file name", required=True, type=str)
+    parser.add_argument("--seed", help="seed", default=42, type=int)
+    parser.add_argument("--restore_ckpt", help="restore checkpoint", default=None, type=str)
     args = parse_args(parser)
     smp, world_size = init_ddp()
     if world_size > 1:

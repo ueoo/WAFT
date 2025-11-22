@@ -1,19 +1,22 @@
+import math
+import os
+import os.path as osp
+import random
+
+from glob import glob
+
+import cv2
+import h5py
 import numpy as np
 import torch
-import torch.utils.data as data
 import torch.nn.functional as F
+import torch.utils.data as data
 
-import os
-import math
-import random
-import h5py
-import cv2
 from tqdm import tqdm
-from glob import glob
-import os.path as osp
 
-from utils import frame_utils
 from dataloader.augmentor import FlowAugmentor
+from utils import frame_utils
+
 
 class FlowDataset(data.Dataset):
     def __init__(self, aug_params=None, sparse=False):
@@ -60,8 +63,8 @@ class FlowDataset(data.Dataset):
         img2 = np.array(img2).astype(np.uint8)
         # grayscale images
         if len(img1.shape) == 2:
-            img1 = np.tile(img1[...,None], (1, 1, 3))
-            img2 = np.tile(img2[...,None], (1, 1, 3))
+            img1 = np.tile(img1[..., None], (1, 1, 3))
+            img2 = np.tile(img2[..., None], (1, 1, 3))
         else:
             img1 = img1[..., :3]
             img2 = img2[..., :3]
@@ -78,11 +81,10 @@ class FlowDataset(data.Dataset):
         flow[torch.isnan(flow)] = 0
         return img1, img2, flow, valid.float()
 
-
     def __rmul__(self, v):
         self.flow_list = v * self.flow_list
         self.image_list = v * self.image_list
         return self
-        
+
     def __len__(self):
         return len(self.image_list)
