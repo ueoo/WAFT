@@ -32,7 +32,7 @@ class DepthAnythingFeature(nn.Module):
         depth_anything = DepthAnythingV2(**DEPTH_ANYTHING_CONFIGS[model_name])
         if pretrained:
             depth_anything.load_state_dict(
-                torch.load(f"depth-anything-ckpts/depth_anything_v2_{model_name}.pth", map_location="cpu")
+                torch.load(f"/svl/data/two-phase-flow/yuegao/depth-anything-ckpts/depth_anything_v2_{model_name}.pth", map_location="cpu")
             )
 
         self.encoder = self.freeze_(depth_anything.pretrained)
